@@ -13,6 +13,7 @@ from geometry_msgs.msg import Point
 
 import copy
 
+#roslaunch realsense2_camera rs_camera.launch depth_width:=424 depth_height:=240 color_width:=424 color_height:=240 depth_fps:=15 color:=15 filters:=pointcloud ordered_pc:=true color_fps:=15
 class ButiaPose():
 
     open_pose_map = { "nose": 0,
@@ -114,7 +115,7 @@ class ButiaPose():
 
         # Convert the message to numpy array
         cv_img = ros_numpy.numpify(img)
-        print(cv_img.shape)
+        #print(cv_img.shape)
         cv_points = ros_numpy.numpify(points)
 
         # Create cudaImage object from cv_img
@@ -126,6 +127,7 @@ class ButiaPose():
         poses = self.net.Process(cuda_image, overlay="keypoints")
         #print(poses[0].x)
         #self.out.Render(cuda_image)
+        #self.out.SetStatus("Preview")
 
         # If any person was detected
         if len(poses):
@@ -137,10 +139,11 @@ class ButiaPose():
         pc = ros_numpy.numpify(points)
 
         # Create the Persons messages for each person detected
-        print(self.net.GetKeypointScale())
+#        print(self.net.GetKeypointScale())
         if nb_persons != 0:
+            print(len(poses))
             for person in poses:
-                print(person.Keypoints)                
+                #print(person.Keypoints)                
                 pose  = Person()
                 pose.bodyParts = [BodyPart() for _ in range(len(self.open_pose_map.values()))]
                 pose.leftHandParts = [BodyPart() for _ in range(21)]
@@ -155,7 +158,7 @@ class ButiaPose():
                     pose.bodyParts[i].pixel = pixel
                     if (0 <= pixel.x <= pc.shape[0]) and (0 <= pixel.y <= pc.shape[1]):
                         pose.bodyParts[i].point = getCloudPointFromImage(pixel.x, pixel.y,pc)
-                        print(f"On_pose:{pose.bodyParts[i].point}")
+                        #print(f"On_pose:{pose.bodyParts[i].point}")
                         pose.bodyParts[i].score = 1.0
                     else:
                         pose.bodyParts[i].score = 0.0
@@ -223,7 +226,8 @@ class ButiaPose():
                         point.y = -1
                         point.z = -1
                         face_part.score = 0.0
-            frame.persons.append(pose)
+                frame.persons.append(pose)
+        print(len(frame.persons))
         self._pub.publish(frame)
         #print(len(pc.data))	
 
@@ -235,7 +239,7 @@ def getCloudPointFromImage(x, y, points) -> Point:
         point.x = x_3D
         point.y = y_3D
         point.z = z_3D
-        print(point)
+        #print(f"{x} and {y} : {point}")
         return point
 
 if __name__ == "__main__":
