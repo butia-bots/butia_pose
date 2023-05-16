@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.7
 import rospy
 import ros_numpy
 
@@ -74,8 +74,8 @@ class ButiaPose():
         self._loadNetwork()
 
         VisionSynchronizer.syncSubscribers(self.source_topic_dict, self.callback)
-        self._pub = rospy.Publisher("/butia_vision/pose",Frame,queue_size=10)
-        self._pubDebug = rospy.Publisher("/butia_vision/pose/image", Image, queue_size=10)
+        self._pub = rospy.Publisher("/butia_vision/pose",Frame,queue_size=1)
+        self._pubDebug = rospy.Publisher("/butia_vision/pose/image", Image, queue_size=1)
 
         self.run()
         
@@ -93,14 +93,14 @@ class ButiaPose():
 		"image_rgb":"/camera/color/image_raw"
                 }
 
-        self.network = "yolov8-pose.pt"
+        self.network = "yolov8n-pose.pt"
 
     def callback(self, *args):
         #print("CHEGUEI AQUI")
 
         # Init the Frame message and write you header
         frame = Frame()
-        frame.header.stamp = rospy.Time.now()
+        #frame.header.stamp = rospy.Time.now()
 
         # Init the img and points variable
         img = None
@@ -119,6 +119,7 @@ class ButiaPose():
 
         results = self.net(cv_img,save=False)
         annotated_frame = results[0].plot()
+        self._pubDebug.publish(ros_numpy.msgify(Image, annotated_frame,encoding=img.encoding))
         for i in range(len(results[0].boxes)):
             if results[0].boxes.conf[i].item() > 0.8:
                 pose  = Person()
@@ -136,13 +137,14 @@ class ButiaPose():
                         #ADD SCORE
                         pose.bodyParts[i].pixel = pixel
                         pose.bodyParts[i].score = kpt[2]
-                        pose.bodyParts[i].point = getCloudPointFromImage(kpt[0],kpt[1], cv_points)
+                        pose.bodyParts[i].point = getCloudPointFromImage(kpt[1],kpt[0], cv_points)
                 
                 frame.persons.append(pose)
-        self._pub(frame)
-        self._pubDebug(ros_numpy.msgify(Image, annotated_frame))
+        print('oi')
+        self._pub.publish(frame)
+        
   
-def getCloudPointFromImage(x, y, points) -> Point:
+def getCloudPointFromImage(x, y, points):
         x_3D, y_3D, z_3D, p3d = points[int(x), int(y)]
         #print(f"{x} {y} {z}")
         point  = Point()
