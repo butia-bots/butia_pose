@@ -2,7 +2,7 @@
 <package format="2">
   <name>butia_pose</name>
   <version>0.0.0</version>
-  <description>The fbot_pose package</description>
+  <description>The butia_pose package</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag -->
   <!-- Example:  -->

@@ -1,0 +1,19 @@
+threshold: 0.8
+model_file: yolov8n-pose.pt
+voxel_size: 0.03
+subscribers:
+  queue_size: 1
+  exact_time: false
+  slop: 0.5
+
+  image_rgb: /kinect2/qhd/image_color_rect
+  points: /kinect2/qhd/points
+
+publishers:
+  pose_detection:
+    data: /butia_vision/pose 
+    debug_image: /butia_vision/pose/image
+
+  markers:
+    topic: /butia_vision/pose/markers
+    lifetime: 1
