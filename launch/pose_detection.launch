@@ -1,0 +1,16 @@
+<launch>
+    <arg name="machine" default="localhost"/>
+    <arg name="use_machine" default="true"/>
+    <arg name="output" default="screen"/>
+    <arg name="markers" default="true"/>
+    <arg name="lifetime" default="1.0"/>
+
+    <machine name="localhost" address="localhost" if="$(arg use_machine)"/>
+
+    <node pkg="butia_pose" type="butia_pose_node.py" name="pose_detection" machine="$(arg machine)">
+        <rosparam command="load" file="$(find butia_pose)/config/pose_config.yaml"/>
+    </node>
+    <node pkg="butia_pose" type="pose_marker.py" name="pose_detection_marker" machine="$(arg machine)" if="$(arg markers)">
+        <rosparam command="load" file="$(find butia_pose)/config/pose_config.yaml"/>
+    </node>
+</launch>

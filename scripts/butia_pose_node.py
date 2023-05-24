@@ -1,19 +1,23 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import rospy
 import ros_numpy
 
-from jetson_inference import poseNet
-from jetson_utils import cudaFromNumpy, videoOutput
+from ultralytics import YOLO
 
 from butia_vision_bridge import VisionSynchronizer, VisionBridge
 from butia_vision_msgs.msg import Frame, BodyPart, Pixel, Person
 
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, Image
 from geometry_msgs.msg import Point
 
 import copy
+import cv2
+import open3d as o3d
+import numpy as np
+from math import pow
 
 #roslaunch realsense2_camera rs_camera.launch depth_width:=424 depth_height:=240 color_width:=424 color_height:=240 depth_fps:=15 color:=15 filters:=pointcloud ordered_pc:=true color_fps:=15
+already_printed = False
 class ButiaPose():
 
     open_pose_map = { "nose": 0,
@@ -44,204 +48,146 @@ class ButiaPose():
                      "Background":25}
         
 
-#    body_parts_map = (
-#        "nose",
-#        "left_eye",
-#        "right_eye",
-#        "left_ear",
-#        "right_ear",
-#        "left_shoulder",
-#        "right_shoulder",
-#        "left_elbow",
-#        "right_elbow",
-#        "left_wrist",
-#        "right_wrist",
-#        "left_hip",
-#        "right_hip",
-#        "left_knee",
-#        "right_knee",
-#        "left_ankle",
-#        "right_ankle",
-#        "neck"
-#        )
+    yolo_map = (
+       "nose",
+       "left_eye",
+       "right_eye",
+       "left_ear",
+       "right_ear",
+       "left_shoulder",
+       "right_shoulder",
+       "left_elbow",
+       "right_elbow",
+       "left_wrist",
+       "right_wrist",
+       "left_hip",
+       "right_hip",
+       "left_knee",
+       "right_knee",
+       "left_ankle",
+       "right_ankle",
+       )
     
     def __init__(self):
         self.img = None
         self.net = None
-
-        #self.out = videoOutput("display://0")
-
         self._readParameters()
         self._loadNetwork()
 
-        VisionSynchronizer.syncSubscribers(self.source_topic_dict, self.callback)
-        self._pub = rospy.Publisher("/butia_vision/pose",Frame,queue_size=10)
+        VisionSynchronizer.syncSubscribers(self.source_topic_dict, self.callback, slop=self._slop)
+        self._pub = rospy.Publisher(self._pubTopic, Frame, queue_size=self._queue)
+        self._pubDebug = rospy.Publisher(self._pubDebugTopic, Image, queue_size=self._queue)
+        self._EPS = 2 * self._VOXEL_SIZE * np.sqrt(3)
 
         self.run()
         
     def run(self):
-        rate = rospy.Rate(1)
+        rate = rospy.Rate(30)
         while not rospy.is_shutdown():
             rate.sleep()
 
     def _loadNetwork(self):
-        self.net = poseNet(self.network)
-        self.net.SetKeypointScale(1)
+        self.net = YOLO(self.network)
 
     def _readParameters(self):
         self.source_topic_dict = {
-		"points":"/camera/depth/color/points",
-		"image_rgb":"/camera/color/image_raw"
+		"points": rospy.get_param("~subscribers/points","/kinect2/qhd/points"),
+		"image_rgb": rospy.get_param("~subscribers/image_rgb", "/kinect2/qhd/image_color_rect")
                 }
 
-        self.network = "resnet18-body"
+        self.network = rospy.get_param("~model_file", "yolov8n-pose.pt")
+        self._pubTopic = rospy.get_param("~publishers/pose_detection/data","/butia_vision/pose")
+        self._pubDebugTopic = rospy.get_param("~publishers/pose_detection/debug_image","/butia_vision/pose/image")
+        self._queue = rospy.get_param("~subscribers/queue_size", 1)
+        self._slop = rospy.get_param("~subscribers/slop",0.5)
+        self._VOXEL_SIZE = rospy.get_param("~voxel_size",0.03)
+        self._threshold = rospy.get_param("~threshold",0.8)
 
     def callback(self, *args):
-        #print("CHEGUEI AQUI")
-
-        # Init the Frame message and write you header
         frame = Frame()
-        frame.header.stamp = rospy.Time.now()
-
-        # Init the img and points variable
         img = None
         points = None
-
-        # To verify if exists messages being published in topics (self.source_topic_dict)
         if len(args):
             img = args[0]
             points = args[1]
             frame.header = points.header
-
-        # Convert the message to numpy array
         cv_img = ros_numpy.numpify(img)
-        #print(cv_img.shape)
-        cv_points = ros_numpy.numpify(points)
+        xyz, rgb = VisionBridge.pointCloud2XYZRGBtoArrays(points)
+        array_point_cloud = np.append(xyz, rgb, axis=2)
 
-        # Create cudaImage object from cv_img
-        cuda_image = cudaFromNumpy(cv_img)
-
-        # Get the poses (how many people) are being detected
-        #print(cv_img.shape[0])
-        #print(cv_img.shape[1])  
-        poses = self.net.Process(cuda_image, overlay="keypoints")
-        #print(poses[0].x)
-        #self.out.Render(cuda_image)
-        #self.out.SetStatus("Preview")
-
-        # If any person was detected
-        if len(poses):
-            nb_persons = len(poses)
-            bodypart_count = len(poses)
-        else:
-            nb_persons = 0
-            bodypart_count = 0
-        pc = ros_numpy.numpify(points)
-
-        # Create the Persons messages for each person detected
-#        print(self.net.GetKeypointScale())
-        if nb_persons != 0:
-            print(len(poses))
-            for person in poses:
-                #print(person.Keypoints)                
+        results = self.net(cv_img,save=False)
+        annotated_frame = results[0].plot()
+        self._pubDebug.publish(ros_numpy.msgify(Image, annotated_frame,encoding=img.encoding))
+        for i in range(len(results[0].boxes)):
+            if results[0].boxes.conf[i].item() > self._threshold:
                 pose  = Person()
                 pose.bodyParts = [BodyPart() for _ in range(len(self.open_pose_map.values()))]
                 pose.leftHandParts = [BodyPart() for _ in range(21)]
                 pose.rightHandParts = [BodyPart() for _ in range(21)]
                 pose.faceParts = [BodyPart() for _ in range(70)]
 
-                for part in person.Keypoints:
-                    pixel = Pixel()
-                    i = self.open_pose_map[self.net.GetKeypointName(part.ID)]
-                    pixel.x = part.x
-                    pixel.y = part.y
-                    pose.bodyParts[i].pixel = pixel
-                    if (0 <= pixel.x <= pc.shape[0]) and (0 <= pixel.y <= pc.shape[1]):
-                        pose.bodyParts[i].point = getCloudPointFromImage(pixel.x, pixel.y,pc)
-                        #print(f"On_pose:{pose.bodyParts[i].point}")
-                        pose.bodyParts[i].score = 1.0
-                    else:
-                        pose.bodyParts[i].score = 0.0
-                    
-		
-
-		##################bodyparts###############
-#               for i, name in self.open_pose_map.items():
-#                  pixel = Pixel()
-#                  if name in self.body_parts_map:
-#                       #print(name)
-#                       print(self.net.FindKeypointID(name))
-#                       print(len(person.Keypoints))
-#                       part = person.Keypoints[self.net.FindKeypointID(name)]
-#                       pixel.x = part.x
-#                       pixel.y = part.y
-#                       print(f"PIXELS {pixel.x} {pixel.y}")
-#                       pose.bodyParts[i].pixel = pixel
-#                       if (0 <= pixel.x <= pc.shape[0]) and (0 <= pixel.y <= pc.shape[1]):
-#                           pose.bodyParts[i].point = getCloudPointFromImage(pixel.x, pixel.y,pc)
-#                           pose.bodyParts[i].score = 1.0
-#                       else:
-#                           pose.bodyParts[i].score = 0.0
-#                        
-#                   else:
-#                        pixel.x = -1
-#                        pixel.y = -1
-#                        pose.bodyParts[i].pixel = pixel
-#                        point = Point()
-#                        point.x = -1
-#                        point.y = -1
-#                        point.z = -1
-#                        pose.bodyParts[i].point = getCloudPointFromImage(pixel.x, pixel.y,pc)
-#                        pose.bodyParts[i].score = 0.0
-		#################left hand#################
-                for hand_part in pose.leftHandParts:
+                box = results[0].boxes[i].xyxy[0].cpu().numpy()
+                for idx, kpt in enumerate(results[0].keypoints[i]):
+                    if kpt[2] > 0.8:
                         pixel = Pixel()
-                        pixel.x = -1
-                        pixel.y = -1
-                        hand_part.pixel = pixel
-                        point = Point()
-                        point.x = -1
-                        point.y = -1
-                        point.z = -1
-                        hand_part.score = 0.0
-		#################right hand#################
-                for hand_part in pose.rightHandParts:
-                        pixel = Pixel()
-                        pixel.x = -1
-                        pixel.y = -1
-                        hand_part.pixel = pixel
-                        point = Point()
-                        point.x = -1
-                        point.y = -1
-                        point.z = -1
-                        hand_part.score = 0.0
-		#################face      #################
-                for face_part in pose.faceParts:
-                        pixel = Pixel()
-                        pixel.x = -1
-                        pixel.y = -1
-                        face_part.pixel = pixel
-                        point = Point()
-                        point.x = -1
-                        point.y = -1
-                        point.z = -1
-                        face_part.score = 0.0
+                        pixel.x = kpt[0]
+                        pixel.y = kpt[1]
+                        i = self.open_pose_map[self.yolo_map[idx]]
+                        #ADD SCORE
+                        pose.bodyParts[i].pixel = pixel
+                        point = self.__imageToPoint(int(kpt[0]),int(kpt[1]), array_point_cloud, box)
+                        if point != None:
+                            pose.bodyParts[i].point = point
+                            pose.bodyParts[i].score = kpt[2]
+                        else:
+                            pose.bodyParts[i].score = 0
                 frame.persons.append(pose)
-        print(len(frame.persons))
         self._pub.publish(frame)
-        #print(len(pc.data))	
 
-def getCloudPointFromImage(x, y, points) -> Point:
-        #np_points = ros_numpy.numpify(points)
-        x_3D, y_3D, z_3D, p3d = points[int(x), int(y)]
-        #print(f"{x} {y} {z}")
-        point  = Point()
-        point.x = x_3D
-        point.y = y_3D
-        point.z = z_3D
-        #print(f"{x} and {y} : {point}")
+    def __imageToPoint(self, x, y, cloud, box):
+        pcd = o3d.geometry.PointCloud()
+        sub_cloud = cloud[max(int(box[1]),y-5):min(int(box[3]),y+5), max(int(box[0]),x-5):min(int(box[2]),x+5),:]
+        sub_cloud = sub_cloud.reshape((-1,3))
+        pcd.points = o3d.utility.Vector3dVector(sub_cloud)
+        pcd = pcd.remove_non_finite_points()
+        pcd = pcd.voxel_down_sample(self._VOXEL_SIZE)
+        pointsn = len(pcd.points)
+        labels_array = np.asarray(pcd.cluster_dbscan(eps=0.03*1.2,min_points=pointsn//4))
+        labels, count = np.unique(labels_array, return_counts=True)
+        clusters = []
+        for label in labels:
+            if label < 0:
+                continue
+            clusters.append([])
+            for label_id, point in zip(labels_array, pcd.points):
+                if label_id == label:
+                    clusters[label].append(point)
+
+        if len(clusters) == 0:
+            return None
+        zs = []
+        for cluster in clusters:
+            print("-"*10)
+            vals = []
+            for point in cluster:
+                vals.append(point[2])
+            zs.append(np.mean(vals))
+        index = zs.index(min(zs))
+        valsx = []
+        valsy = []
+        for point in clusters[index]:
+            valsx.append(point[0])
+            valsy.append(point[1])
+        
+        x = np.mean(valsx)
+        y = np.mean(valsy)
+
+        point = Point()
+        point.x = x
+        point.y = y
+        point.z = zs[index]
+
         return point
-
 if __name__ == "__main__":
     rospy.init_node("pose_node")
 
