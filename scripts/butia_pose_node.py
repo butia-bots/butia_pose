@@ -68,6 +68,8 @@ class ButiaPose():
        "right_ankle",
        )
     
+    colors = [(255,0,0),(0,255,0),(0,0,255),(255,255,0),(255,0,255),(255,255,255)]
+    
     def __init__(self):
         self.img = None
         self.net = None
@@ -77,6 +79,7 @@ class ButiaPose():
         VisionSynchronizer.syncSubscribers(self.source_topic_dict, self.callback, slop=self._slop)
         self._pub = rospy.Publisher(self._pubTopic, Frame, queue_size=self._queue)
         self._pubDebug = rospy.Publisher(self._pubDebugTopic, Image, queue_size=self._queue)
+        self._pubDebugCluster = rospy.Publisher("/butia_vision/pose/clusters", PointCloud2, queue_size=self._queue)
         self._EPS = 2 * self._VOXEL_SIZE * np.sqrt(3)
 
         self.run()
@@ -135,7 +138,7 @@ class ButiaPose():
                         i = self.open_pose_map[self.yolo_map[idx]]
                         #ADD SCORE
                         pose.bodyParts[i].pixel = pixel
-                        point = self.__imageToPoint(int(kpt[0]),int(kpt[1]), array_point_cloud, box)
+                        point = self.__imageToPoint(int(kpt[0]),int(kpt[1]), array_point_cloud, box, points.header)
                         if point != None:
                             pose.bodyParts[i].point = point
                             pose.bodyParts[i].score = kpt[2]
@@ -144,7 +147,7 @@ class ButiaPose():
                 frame.persons.append(pose)
         self._pub.publish(frame)
 
-    def __imageToPoint(self, x, y, cloud, box):
+    def __imageToPoint(self, x, y, cloud, box, header):
         pcd = o3d.geometry.PointCloud()
         sub_cloud = cloud[max(int(box[1]),y-5):min(int(box[3]),y+5), max(int(box[0]),x-5):min(int(box[2]),x+5),:]
         sub_cloud = sub_cloud.reshape((-1,3))
@@ -166,12 +169,21 @@ class ButiaPose():
         if len(clusters) == 0:
             return None
         zs = []
-        for cluster in clusters:
+
+        all_points = []
+        all_points_colors = []
+        for i, cluster in enumerate(clusters):
+            # pc = VisionBridge.arrays2toPointCloud2XYZRGB(cluster, (self.colors[i])*len(cluster),)
+            all_points = np.concatenate(np.array(all_points), np.array(cluster))
+            all_points_colors = np.concatenate(np.array(all_points_colors), np.array((self.colors[i])*len(cluster)))
             print("-"*10)
             vals = []
             for point in cluster:
                 vals.append(point[2])
             zs.append(np.mean(vals))
+        pc_msg = VisionBridge.arrays2toPointCloud2XYZRGB(all_points, all_points_colors, header)
+        self._pubDebugCluster.publish(pc_msg)
+        
         index = zs.index(min(zs))
         valsx = []
         valsy = []
