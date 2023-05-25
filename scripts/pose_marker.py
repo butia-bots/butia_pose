@@ -49,6 +49,7 @@ if __name__ == "__main__":
     global threshold
     lifetime = rospy.get_param("~publishers/markers/lifetime",1.0)
     threshold = rospy.get_param("~threshold",0.8)
+    rospy.loginfo(threshold)
     rospy.init_node("pose_marker")
     sub = rospy.Subscriber("/butia_vision/pose", Frame, callback)
     rospy.spin()

@@ -128,7 +128,7 @@ class ButiaPose():
 
                 box = results[0].boxes[i].xyxy[0].cpu().numpy()
                 for idx, kpt in enumerate(results[0].keypoints[i]):
-                    if kpt[2] > 0.8:
+                    if kpt[2] > self._threshold:
                         pixel = Pixel()
                         pixel.x = kpt[0]
                         pixel.y = kpt[1]
@@ -152,7 +152,7 @@ class ButiaPose():
         pcd = pcd.remove_non_finite_points()
         pcd = pcd.voxel_down_sample(self._VOXEL_SIZE)
         pointsn = len(pcd.points)
-        labels_array = np.asarray(pcd.cluster_dbscan(eps=0.03*1.2,min_points=pointsn//4))
+        labels_array = np.asarray(pcd.cluster_dbscan(eps=self._EPS,min_points=pointsn//4))
         labels, count = np.unique(labels_array, return_counts=True)
         clusters = []
         for label in labels:

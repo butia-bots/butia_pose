@@ -1,4 +1,4 @@
-threshold: 0.8
+threshold: 0.0
 model_file: yolov8n-pose.pt
 voxel_size: 0.03
 subscribers:
