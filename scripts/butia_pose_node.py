@@ -138,7 +138,8 @@ class ButiaPose():
                         i = self.open_pose_map[self.yolo_map[idx]]
                         #ADD SCORE
                         pose.bodyParts[i].pixel = pixel
-                        point = self.__imageToPoint(int(kpt[0]),int(kpt[1]), array_point_cloud, box, points.header)
+                        # rospy.logerr(box)
+                        point = self.__imageToPoint(int(kpt[0]),int(kpt[1]), array_point_cloud, box)
                         if point != None:
                             pose.bodyParts[i].point = point
                             pose.bodyParts[i].score = kpt[2]
@@ -147,57 +148,68 @@ class ButiaPose():
                 frame.persons.append(pose)
         self._pub.publish(frame)
 
-    def __imageToPoint(self, x, y, cloud, box, header):
+    def __imageToPoint(self, x, y, cloud,box):
         pcd = o3d.geometry.PointCloud()
-        sub_cloud = cloud[max(int(box[1]),y-5):min(int(box[3]),y+5), max(int(box[0]),x-5):min(int(box[2]),x+5),:]
-        sub_cloud = sub_cloud.reshape((-1,3))
-        pcd.points = o3d.utility.Vector3dVector(sub_cloud)
-        pcd = pcd.remove_non_finite_points()
-        pcd = pcd.voxel_down_sample(self._VOXEL_SIZE)
-        pointsn = len(pcd.points)
-        labels_array = np.asarray(pcd.cluster_dbscan(eps=0.03*1.2,min_points=pointsn//4))
-        labels, count = np.unique(labels_array, return_counts=True)
-        clusters = []
-        for label in labels:
-            if label < 0:
-                continue
-            clusters.append([])
-            for label_id, point in zip(labels_array, pcd.points):
-                if label_id == label:
-                    clusters[label].append(point)
-
-        if len(clusters) == 0:
-            return None
-        zs = []
-
-        all_points = []
-        all_points_colors = []
-        for i, cluster in enumerate(clusters):
-            # pc = VisionBridge.arrays2toPointCloud2XYZRGB(cluster, (self.colors[i])*len(cluster),)
-            all_points = np.concatenate(np.array(all_points), np.array(cluster))
-            all_points_colors = np.concatenate(np.array(all_points_colors), np.array((self.colors[i])*len(cluster)))
-            print("-"*10)
-            vals = []
-            for point in cluster:
-                vals.append(point[2])
-            zs.append(np.mean(vals))
-        pc_msg = VisionBridge.arrays2toPointCloud2XYZRGB(all_points, all_points_colors, header)
-        self._pubDebugCluster.publish(pc_msg)
-        
-        index = zs.index(min(zs))
-        valsx = []
-        valsy = []
-        for point in clusters[index]:
-            valsx.append(point[0])
-            valsy.append(point[1])
-        
-        x = np.mean(valsx)
-        y = np.mean(valsy)
-
         point = Point()
-        point.x = x
-        point.y = y
-        point.z = zs[index]
+        # rospy.logerr(f"{cloud[:,:,:3]}")
+        x = min(int(box[3]),max(int(box[1]),y))
+        y = min(int(box[2]),max(int(box[0]),x))
+        cloud = cloud[:,:,:3]
+        rospy.logerr(f"{x} {y}")
+        rospy.logerr(f"{cloud[x,y]}")
+        point.x, point.y, point.z = cloud[x,y]
+        # point.x, point.y, point.z, _ = [0,0,0,0]
+
+
+
+        # sub_cloud = sub_cloud.reshape((-1,3))
+        # pcd.points = o3d.utility.Vector3dVector(sub_cloud)
+        # pcd = pcd.remove_non_finite_points()
+        # pcd = pcd.voxel_down_sample(self._VOXEL_SIZE)
+        # pointsn = len(pcd.points)
+        # labels_array = np.asarray(pcd.cluster_dbscan(eps=0.03*1.2,min_points=pointsn//4))
+        # labels, count = np.unique(labels_array, return_counts=True)
+        # clusters = []
+        # for label in labels:
+        #     if label < 0:
+        #         continue
+        #     clusters.append([])
+        #     for label_id, point in zip(labels_array, pcd.points):
+        #         if label_id == label:
+        #             clusters[label].append(point)
+
+        # if len(clusters) == 0:
+        #     return None
+        # zs = []
+
+        # all_points = []
+        # all_points_colors = []
+        # for i, cluster in enumerate(clusters):
+        #     # pc = VisionBridge.arrays2toPointCloud2XYZRGB(cluster, (self.colors[i])*len(cluster),)
+        #     all_points = np.concatenate(np.array(all_points), np.array(cluster))
+        #     all_points_colors = np.concatenate(np.array(all_points_colors), np.array((self.colors[i])*len(cluster)))
+        #     print("-"*10)
+        #     vals = []
+        #     for point in cluster:
+        #         vals.append(point[2])
+        #     zs.append(np.mean(vals))
+        # pc_msg = VisionBridge.arrays2toPointCloud2XYZRGB(all_points, all_points_colors, header)
+        # self._pubDebugCluster.publish(pc_msg)
+        
+        # index = zs.index(min(zs))
+        # valsx = []
+        # valsy = []
+        # for point in clusters[index]:
+        #     valsx.append(point[0])
+        #     valsy.append(point[1])
+        
+        # x = np.mean(valsx)
+        # y = np.mean(valsy)
+
+        # point = Point()
+        # point.x = x
+        # point.y = y
+        # point.z = zs[index]
 
         return point
 if __name__ == "__main__":
