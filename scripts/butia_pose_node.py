@@ -68,7 +68,7 @@ class ButiaPose():
        "right_ankle",
        )
     
-    colors = [(255,0,0),(0,255,0),(0,0,255),(255,255,0),(255,0,255),(255,255,255)]
+    colors = [(255,0,0),(0,255,0),(0,125,255),(255,255,0),(255,0,255),(0,0,255)]
     
     def __init__(self):
         self.img = None
@@ -80,7 +80,9 @@ class ButiaPose():
         self._pub = rospy.Publisher(self._pubTopic, Frame, queue_size=self._queue)
         self._pubDebug = rospy.Publisher(self._pubDebugTopic, Image, queue_size=self._queue)
         self._pubDebugCluster = rospy.Publisher("/butia_vision/pose/clusters", PointCloud2, queue_size=self._queue)
-        self._EPS = 2 * self._VOXEL_SIZE * np.sqrt(3)
+        # self._EPS = 2 * self._VOXEL_SIZE * np.sqrt(3)
+        self._EPS = self._VOXEL_SIZE * 1.2
+        rospy.logerr(self._VOXEL_SIZE)
 
         self.run()
         
@@ -121,6 +123,10 @@ class ButiaPose():
         results = self.net(cv_img,save=False)
         annotated_frame = results[0].plot()
         self._pubDebug.publish(ros_numpy.msgify(Image, annotated_frame,encoding=img.encoding))
+
+        self._clusters_points = np.array([[0,0,0]])
+        self._clusters_points_colors = np.array([[0,0,0]])
+
         for i in range(len(results[0].boxes)):
             if results[0].boxes.conf[i].item() > self._threshold:
                 pose  = Person()
@@ -145,6 +151,9 @@ class ButiaPose():
                         else:
                             pose.bodyParts[i].score = 0
                 frame.persons.append(pose)
+        # rospy.logerr(self._clusters_points)
+        # rospy.logerr(self._clusters_points_colors)
+        self._pubDebugCluster.publish(VisionBridge.arrays2toPointCloud2XYZRGB(self._clusters_points, self._clusters_points_colors, points.header))
         self._pub.publish(frame)
 
     def __imageToPoint(self, x, y, cloud, box, header):
@@ -153,11 +162,15 @@ class ButiaPose():
         sub_cloud = sub_cloud.reshape((-1,3))
         pcd.points = o3d.utility.Vector3dVector(sub_cloud)
         pcd = pcd.remove_non_finite_points()
+        if len(pcd.points) == 0:
+            rospy.logwarn(f"Key points has no valid 3D points!!!")
         pcd = pcd.voxel_down_sample(self._VOXEL_SIZE)
         pointsn = len(pcd.points)
         labels_array = np.asarray(pcd.cluster_dbscan(eps=0.03*1.2,min_points=pointsn//4))
         labels, count = np.unique(labels_array, return_counts=True)
         clusters = []
+
+        noise_cluster = []
         for label in labels:
             if label < 0:
                 continue
@@ -165,43 +178,66 @@ class ButiaPose():
             for label_id, point in zip(labels_array, pcd.points):
                 if label_id == label:
                     clusters[label].append(point)
+                elif label_id == -1:
+                    noise_cluster.append(point)
 
-        if len(clusters) == 0:
-            return None
+        # rospy.logwarn(noise_cluster)
+
+        # if len(clusters) == 0:
+        #     clusters.append(noise_cluster)
+        #     noise_cluster = []
+        
         zs = []
 
-        all_points = []
-        all_points_colors = []
+        # all_points = []
+        # all_points_colors = []
         for i, cluster in enumerate(clusters):
             # pc = VisionBridge.arrays2toPointCloud2XYZRGB(cluster, (self.colors[i])*len(cluster),)
-            all_points = np.concatenate(np.array(all_points), np.array(cluster))
-            all_points_colors = np.concatenate(np.array(all_points_colors), np.array((self.colors[i])*len(cluster)))
+            # rospy.logerr(np.asarray(np.repeat([self.colors[i]],repeats=len(cluster),axis=0)))
+            self._clusters_points = np.concatenate((self._clusters_points, np.array(cluster)), axis=0)
+            self._clusters_points_colors = np.concatenate((self._clusters_points_colors, np.asarray(np.repeat([self.colors[i]],repeats=len(cluster),axis=0))),axis=0)
             print("-"*10)
             vals = []
             for point in cluster:
                 vals.append(point[2])
             zs.append(np.mean(vals))
-        pc_msg = VisionBridge.arrays2toPointCloud2XYZRGB(all_points, all_points_colors, header)
-        self._pubDebugCluster.publish(pc_msg)
         
-        index = zs.index(min(zs))
-        valsx = []
-        valsy = []
-        for point in clusters[index]:
-            valsx.append(point[0])
-            valsy.append(point[1])
+        # rospy.logwarn(noise_cluster)
+        if len(noise_cluster) != 0:
+            self._clusters_points = np.concatenate((self._clusters_points, np.asarray(noise_cluster)),axis=0)
+            self._clusters_points_colors = np.concatenate((self._clusters_points_colors, np.asarray(np.repeat([self.colors[-1]],repeats=len(noise_cluster),axis=0))),axis=0)
+        # pc_msg = VisionBridge.arrays2toPointCloud2XYZRGB(all_points, all_points_colors, header)
+        # self._pubDebugCluster.publish(pc_msg)
+        z = 0
+        xs = []
+        ys = []
+        if len(clusters) != 0:
+            index = zs.index(min(zs))
+            for point in clusters[index]:
+                xs.append(point[0])
+                ys.append(point[1])
+            z = zs[index]
+        else:
+            zs = []
+            xs = []
+            ys = []
+            for point in noise_cluster:
+                zs.append(point[2])
+                xs.append(point[0])
+                ys.append(point[1])
+            z = np.mean(zs)
         
-        x = np.mean(valsx)
-        y = np.mean(valsy)
+        x = np.mean(xs)
+        y = np.mean(ys)
 
         point = Point()
         point.x = x
         point.y = y
-        point.z = zs[index]
+        point.z = z
 
         return point
 if __name__ == "__main__":
-    rospy.init_node("pose_node")
+    rospy.init_node("pose_node", log_level=rospy.INFO)
 
     bp =  ButiaPose()
 

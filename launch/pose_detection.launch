@@ -7,7 +7,7 @@
 
     <machine name="localhost" address="localhost" if="$(arg use_machine)"/>
 
-    <node pkg="butia_pose" type="butia_pose_node.py" name="pose_detection" machine="$(arg machine)">
+    <node pkg="butia_pose" type="butia_pose_node.py" name="pose_detection" required="true" machine="$(arg machine)">
         <rosparam command="load" file="$(find butia_pose)/config/pose_config.yaml"/>
     </node>
     <node pkg="butia_pose" type="pose_marker.py" name="pose_detection_marker" machine="$(arg machine)" if="$(arg markers)">

@@ -1,10 +1,10 @@
-threshold: 0.8
+threshold: 0.0
 model_file: yolov8n-pose.pt
-voxel_size: 0.03
+voxel_size: 0.06
 subscribers:
   queue_size: 1
   exact_time: false
-  slop: 0.5
+  slop: 1.0
 
   image_rgb: /kinect2/qhd/image_color_rect
   points: /kinect2/qhd/points
